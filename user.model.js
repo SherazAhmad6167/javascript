@@ -33,7 +33,7 @@ const userSchema = new Schema({
         type: String,
     },
     watchHistory:[{
-        type: Schema.type.ObjectId,
+        type: Schema.Types.ObjectId,
         ref: "Video"
     }],
     password:{
