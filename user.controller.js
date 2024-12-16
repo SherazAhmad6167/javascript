@@ -4,7 +4,7 @@ import { User } from "../models/user.model.js";
 import {uploadOnCloudinary} from "../utils/cloudinary.js"
 import {ApiResponse} from "../utils/ApiResponse.js"
 import {mongoose} from "mongoose"
-import { Jwt } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
 
 const generateAccessAndRefreshToken = async(userId) => {
     try{
@@ -160,7 +160,7 @@ return res
     await User.findByIdAndUpdate(
         req.user._id,
                 {
-                    $set:{
+                    $unset:{
                         refreshToken: true,
                     }
                                         
@@ -181,7 +181,7 @@ return res
 })
 
 const refreshAccessToken = asyncHandler(async (req,res) => {
-    const incomingRefreshToken = req.cookie.refreshToken || req.body.refreshToken;
+    const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
 
     if(!incomingRefreshToken){
         throw new ApiError(401 , 'Unauthorized request')
@@ -204,8 +204,8 @@ const refreshAccessToken = asyncHandler(async (req,res) => {
 
     return res
     .status(200)
-    .cookie("access token", accessToken, options)
-    .cookie('refresh token', newRefreshToken, options)
+    .cookie("accessToken", accessToken, options)
+    .cookie('refreshToken', newRefreshToken, options)
     .json(
         new ApiResponse(
             200,{accessToken,refreshToken:newRefreshToken},'Access token Refreshed'
@@ -217,9 +217,11 @@ catch(error){
 }
 })
 
-const changeCurrentPassword = asyncHandler( async (req,res)=>{
+ const changeCurrentPassword = asyncHandler( async (req,res)=>{
     const {oldPassword, newPassword} =  req.body
-    const user = await User.findById(user._id)
+    console.log("password");
+    
+    const user = await User.findById(req.user._id)
     const isPasswordCorrect = await user.isPasswordCorrect(oldPassword)
     if(!isPasswordCorrect){
         throw new ApiError(401, 'Invalid old password')
@@ -315,8 +317,135 @@ const getCurrentUser = asyncHandler(async (req, res) => {
             new ApiResponse(200, user , 'Cover Image updated successfully')
         )
     })
+
+    const getUserChannelProfile = asyncHandler (async (req, res)=>{
+        const {userName} = req.params
+
+        if(!userName){
+            throw new ApiError(400 , 'UserName is missing')
+        }
+        console.log("missing");
+        
+        // if (!req.user || !req.user._id) {
+        //     throw new ApiError(401, 'Unauthorized user');
+        // }
+        // console.log("user correcct");
+        
+        const channel = await User.aggregate([
+            {
+                $match: {
+                    userName: userName?.toLowerCase()
+                }            
+            },
+            {
+                $lookup: {
+                    from: "subscriptions",
+                    localField: "_id",
+                    foreignField: "channel",
+                    as: "subscribers"
+                }
+            },{
+                $lookup: {
+                    from: "subscriptions",
+                    localField: "_id",
+                    foreignField: "subscriber",
+                    as: "subscribedTo"
+                }
+            },{
+                $addFields: {
+                    subscriberCount: {
+                        $size : "$subscribers"
+                    },
+                    channelsSubscribedToCount:{
+                        $size : "$subscribedTo"
+                    },
+                    isSubscribed: {
+                        $cond : {
+                            if: {$in : [req.user?._id, "$subscribers.subscriber"]},
+                            then: true,
+                            else: false,
+                        }
+                    }
+                }
+            },{
+                $project : {
+                    fullName: 1,
+                    userName: 1,
+                    email: 1,
+                    isSubscribed: 1,
+                    subscriberCount: 1,
+                    channelsSubscribedToCount: 1,
+                    avatar: 1,
+                    coverImage: 1
+                }
+            }
+        ])
+        
+        if(!channel?.length){
+            throw new ApiError(400, 'Channel doesnot exist')
+        }
+        return res
+        .status(200)
+        .json(
+            new ApiResponse(200 , channel[0], 'Channel fetched successfully')
+        )
+    })
+
+    const getWatchHistory = asyncHandler (async (req, res )=> {
+        const user = await User.aggregate([
+            {
+                $match: {
+                    _id: new mongoose.Types.ObjectId(req.user._id)         
+                }
+        },{
+            $lookup: {
+                from : "Videos",
+                localField:"watchHistory",
+                foreignField: "_id",
+                as: "watchHistory",
+                pipeline:[
+                    {
+                        $lookup: {
+                            from :"users",
+                            localField: "owner",
+                            foreignField: "_id",
+                            as: "owner",
+                            pipeline:[
+                                {
+                                    $project:{
+                                        fullName: 1,
+                                        userName: 1,
+                                        avatar: 1
+                                    }
+                                }
+                            ]
+                        }
+                    },{
+                        $addFields:{
+                            owner: {
+                                $first : "$owner"
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    ])
+    return res
+    .status(200)
+    .json(
+        new ApiResponse(200 , user[0].watchHistory , 'Watch History Fetched Successfully')
+    )
+    })
 export{
     registerUser,
     loginUser,
     refreshAccessToken,
+    changeCurrentPassword,
+    getCurrentUser,
+    updateAccountDetails,
+    updateUserAvatar,
+    updateUserCoverImage,
+    getUserChannelProfile,
+    getWatchHistory,
 }
